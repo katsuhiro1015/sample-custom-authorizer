@@ -1,0 +1,97 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: LambdaAuthorizer Test
+Globals:
+  Function:
+    Runtime: python3.9
+    Timeout: 5
+    Environment:
+      Variables:
+        PYTHONPATH: /var/runtime:/var/task/libs
+Parameters:
+  UserPoolId:
+    Type: String
+    Description: CognitoのユーザプールID
+  ClientId:
+    Type: String
+    Description: Cognitoに登録されているクライアントID
+  IpWhiteList:
+    Type: String
+    Description: IPアドレスのホワイトリスト (カンマ区切り)
+
+Resources:
+  Hello:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: hello.lambda_handler
+      Runtime: python3.9
+  Authorizer:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: authorizer.lambda_handler
+      Runtime: python3.9
+      Environment:
+        Variables:
+          USER_POOL_ID: !Sub ${UserPoolId}
+          CLIENT_ID: !Sub ${ClientId}
+          IP_WHITE_LIST: !Sub ${IpWhiteList}
+  LambdaPermissionHello:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref Hello
+      Principal: apigateway.amazonaws.com
+  LambdaPermissionAuthorizer:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref Authorizer
+      Principal: apigateway.amazonaws.com
+  HelloAPI:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Dev
+      DefinitionBody:
+        swagger: "2.0"
+        info:
+          version: "1.0.0"
+          title: "lambda authorizer test"
+        basePath: "/"
+        schemes:
+        - "http"
+        paths:
+          /:
+            get:
+              summary: "lambda authorizer test"
+              description: "lambda authorizer test"
+              produces:
+              - "application/json"
+              responses:
+                "200":
+                  description: "successful operation"
+              x-amazon-apigateway-integration:
+                uri:
+                  Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Hello.Arn}/invocations
+                passthroughBehavior: "when_no_match"
+                httpMethod: "POST"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws_proxy"
+                responses:
+                  default:
+                    statusCode: "200"
+              security:
+                - authorizer: []
+        securityDefinitions:
+          authorizer:
+            type: apiKey
+            name: Authorization
+            in: header
+            x-amazon-apigateway-authtype: custom
+            x-amazon-apigateway-authorizer:
+              type: request
+              identitySource: method.request.header.Authorization
+              authorizerResultTtlInSeconds: 0 # テストではキャッシュしない
+              authorizerUri:
+                Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Authorizer.Arn}/invocations
